@@ -1,0 +1,37 @@
+# Model and data paths. These are ok to mess with. "train_file" is your input data. "output_dir" is where you want to save the trained model.
+
+model_name: "Qwen/Qwen3-32B"
+train_file: data/raw/CLEANED_some_doc_access__1.json
+output_dir: /project/Ash/COSI_tour_guide_spring2026_checkpoints/qwen3-32b-sft
+
+
+##### Don't mess with this stuff unless we discuss first.
+# QLoRA
+lora_r: 64
+lora_alpha: 16
+lora_dropout: 0.05
+target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+# Quantization
+load_in_4bit: true
+bnb_4bit_compute_dtype: bfloat16
+bnb_4bit_quant_type: nf4
+bnb_4bit_use_double_quant: true
+
+# Training
+num_train_epochs: 3
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-4
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+max_seq_length: 32768
+bf16: true
+gradient_checkpointing: true
+optim: paged_adamw_8bit
+
+# Logging & saving
+logging_steps: 1
+save_steps: 50
+save_total_limit: 3
+
