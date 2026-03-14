@@ -107,6 +107,7 @@ def main():
         train_dataset=dataset,
         processing_class=tokenizer,
         peft_config=peft_config,
+        chat_template_kwargs={"enable_thinking": False},
     )
 
     # --- Train ---

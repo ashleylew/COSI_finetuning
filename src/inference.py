@@ -51,7 +51,8 @@ def load_model(adapter_path: str):
 def generate_response(model, tokenizer, conversation, max_new_tokens):
     """Generate a single assistant response given a conversation so far."""
     input_text = tokenizer.apply_chat_template(
-        conversation, tokenize=False, add_generation_prompt=True
+        conversation, tokenize=False, add_generation_prompt=True,
+        enable_thinking=False
     )
     inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
 
