@@ -46,6 +46,14 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
+    # Disable Qwen3 thinking mode: patch apply_chat_template so TRL always
+    # calls it with enable_thinking=False (TRL 0.28 has no chat_template_kwargs).
+    _orig_apply = tokenizer.apply_chat_template
+    def _apply_no_thinking(messages, **kwargs):
+        kwargs.setdefault("enable_thinking", False)
+        return _orig_apply(messages, **kwargs)
+    tokenizer.apply_chat_template = _apply_no_thinking
+
     # --- Quantization config ---
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=cfg["load_in_4bit"],
@@ -107,7 +115,6 @@ def main():
         train_dataset=dataset,
         processing_class=tokenizer,
         peft_config=peft_config,
-        chat_template_kwargs={"enable_thinking": False},
     )
 
     # --- Train ---
