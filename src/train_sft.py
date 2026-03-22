@@ -106,6 +106,7 @@ def main():
         save_total_limit=cfg["save_total_limit"],
         report_to="none",
         remove_unused_columns=False,
+        use_liger_kernel=True,
     )
 
     # --- Trainer ---

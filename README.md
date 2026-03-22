@@ -4,12 +4,12 @@ QLoRA finetuning of Qwen3 models to create "Ollie," a virtual tour guide for the
 
 ## Overview
 
-This codebase finetunes Qwen3-8B or Qwen3-32B using QLoRA + SFT (Supervised Fine-Tuning). Every training example includes the full set of museum reference documents (~25K tokens) in the system message alongside Ollie's persona prompt, then trains on multi-turn Visitor/Guide conversations.
+This codebase finetunes Qwen3-8B or Qwen3-32B using QLoRA + SFT (Supervised Fine-Tuning). Every training example includes the full set of museum reference documents (~21K tokens across 36 files) in the system message alongside Ollie's persona prompt, then trains on multi-turn Visitor/Guide conversations.
 
 ## Prerequisites
 
-- **Hardware**: 2x NVIDIA A6000 48GB (8B fits on 1 GPU, 32B needs 2)
-- **CUDA**: 12.5
+- **Hardware**: 2x NVIDIA RTX A6000 48GB (8B trained on 1 GPU, 32B needs 2)
+- **CUDA**: 12.8
 - **Conda environment**: `COSI_finetuning` (Python 3.11)
 - **Models**: Cached at `/project/.cache`
 
@@ -58,8 +58,10 @@ The data pipeline automatically:
 
 **8B model (single GPU):**
 ```bash
-python src/train_sft.py --config configs/sft_qwen3_8b.yaml
+CUDA_VISIBLE_DEVICES=0 python src/train_sft.py --config configs/sft_qwen3_8b.yaml
 ```
+
+`CUDA_VISIBLE_DEVICES=0` is required for the 8B model. The full document context (~21K tokens) plus conversation turns exceeds the memory budget when split across two GPUs with Liger Kernel's fused loss. Pinning to one GPU avoids cross-device tensor errors and fits comfortably within 48GB.
 
 **32B model (2 GPUs):**
 ```bash
@@ -111,21 +113,43 @@ Output format:
 
 Key parameters in `configs/sft_qwen3_*.yaml`:
 
-| Parameter | Description |
+| Parameter | 8B value | 32B value | Description |
+|---|---|---|---|
+| `model_name` | `Qwen/Qwen3-8B` | `Qwen/Qwen3-32B` | HuggingFace model ID |
+| `train_file` | — | — | Path to the training data JSON file |
+| `output_dir` | — | — | Where to save checkpoints and final adapter |
+| `max_seq_length` | 28000 | 32768 | Max tokens per example — must exceed ~21K (system+docs) |
+| `lora_r` | 64 | 64 | LoRA rank |
+| `lora_alpha` | 64 | 64 | LoRA scaling factor (should equal `lora_r`) |
+| `target_modules` | all projection layers | all projection layers | Which layers get LoRA adapters |
+| `load_in_4bit` | true | true | Enable 4-bit quantization (QLoRA) |
+| `per_device_train_batch_size` | 1 | 1 | Batch size per GPU |
+| `gradient_accumulation_steps` | 8 | 16 | Effective batch = this × batch_size × num_gpus |
+| `learning_rate` | 2e-4 | 1e-4 | Peak LR |
+| `gradient_checkpointing` | true | true | Trade compute for memory |
+| `optim` | paged_adamw_8bit | paged_adamw_8bit | Optimizer |
+
+## Training Details (for reference / paper reporting)
+
+### 8B model
+
+| Setting | Value |
 |---|---|
-| `model_name` | HuggingFace model ID |
-| `train_file` | Path to the training data JSON file |
-| `output_dir` | Where to save checkpoints and final adapter |
-| `max_seq_length` | Max tokens per example (16384 for 8B, 32768 for 32B) |
-| `lora_r` | LoRA rank (64) |
-| `lora_alpha` | LoRA scaling factor (16) |
-| `target_modules` | Which layers get LoRA adapters |
-| `load_in_4bit` | Enable 4-bit quantization (QLoRA) |
-| `per_device_train_batch_size` | Batch size per GPU |
-| `gradient_accumulation_steps` | Effective batch = this x batch_size x num_gpus |
-| `learning_rate` | Peak LR (2e-4 for 8B, 1e-4 for 32B) |
-| `gradient_checkpointing` | Trade compute for memory |
-| `optim` | Optimizer (paged_adamw_8bit for memory efficiency) |
+| Base model | Qwen/Qwen3-8B |
+| Method | QLoRA (SFT) |
+| LoRA rank / alpha | 64 / 64 |
+| LoRA target modules | q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj |
+| Quantization | 4-bit NF4, double quantization, bfloat16 compute |
+| Optimizer | paged_adamw_8bit |
+| Learning rate | 2e-4 (cosine schedule, 3% warmup) |
+| Epochs | 3 |
+| Batch size (effective) | 8 (batch 1 × grad accum 8) |
+| Max sequence length | 28,000 tokens |
+| Context: system + docs | ~20,938 tokens (36 files across general, permanent, and temporary exhibit docs) |
+| Hardware | 1× NVIDIA RTX A6000 48GB |
+| CUDA | 12.8 |
+| Memory optimizations | Gradient checkpointing, Liger Kernel fused cross-entropy (`use_liger_kernel=True` in TRL SFTConfig) |
+| Thinking mode | Disabled (`enable_thinking=False` in tokenizer chat template) |
 
 ## Extending to DPO
 
@@ -138,11 +162,15 @@ To add DPO (Direct Preference Optimization) training:
 
 ## Troubleshooting
 
-**OOM errors:**
-- Reduce `max_seq_length` (the 8B config uses 16384 which fits on 1 A6000)
-- Reduce `per_device_train_batch_size` to 1 (should already be 1)
+**OOM errors on the 8B model:**
+- Make sure you're running with `CUDA_VISIBLE_DEVICES=0` (single GPU)
+- The full document context is ~21K tokens; `max_seq_length` must be at least 22K — the current setting of 28K gives ~7K of headroom for conversations
+- `use_liger_kernel=True` in SFTConfig is required — without it, the backward pass materializes a `[seq_len, vocab_size]` float32 tensor (~12 GB) that causes OOM
 - Ensure `gradient_checkpointing: true`
-- For 32B, must use 2 GPUs with `accelerate launch`
+
+**Cross-device tensor errors with Liger Kernel:**
+- Use `CUDA_VISIBLE_DEVICES=0` so `device_map="auto"` maps everything to a single GPU
+- Liger's fused loss does not support multi-GPU model parallelism (`device_map="auto"` across multiple devices)
 
 **Slow training:**
 - Check that `bf16: true` is set
@@ -155,3 +183,6 @@ To add DPO (Direct Preference Optimization) training:
 **Model downloads into home directory:**
 - You forgot to set `export HF_HOME=/project/.cache` before running
 - Delete any accidental downloads and re-run with the env var set
+
+**Qwen3 thinking mode:**
+- Qwen3 defaults to thinking mode (generates `<think>...</think>` tokens). This is disabled at inference via `enable_thinking=False` in `apply_chat_template`, and during training via a monkey-patch on the tokenizer in `train_sft.py`. Do not remove these without understanding the implications for training/inference consistency.

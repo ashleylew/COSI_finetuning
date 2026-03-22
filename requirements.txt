@@ -6,3 +6,4 @@ bitsandbytes>=0.44.0
 accelerate>=1.0.0
 datasets>=3.0.0
 pyyaml>=6.0
+liger-kernel>=0.5.0
